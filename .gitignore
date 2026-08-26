@@ -1,0 +1,30 @@
+# Python / backend
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# SQLite（backend/todo.db など。DB ファイルはコミットしない）
+*.db
+*.db-journal
+
+# Node / frontend
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# ログ
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# エディタ / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.swp
