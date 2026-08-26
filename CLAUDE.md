@@ -1,7 +1,7 @@
 # CLAUDE.md
 
-> **ステータス: 技術スタック・API 契約 確定（2026-08-26） / セットアップ未着手**
-> セットアップの手順とゲートは `SETUP.md` を参照する。
+> **ステータス: セットアップ完了・CRUD 一通り動作（2026-08-26）**
+> セットアップの手順・実行記録・踏んだ問題は `SETUP.md` を参照する。
 > 未決定の項目は「未決定の論点」セクションのみ。推測で実装を進めない。
 
 ## プロジェクト概要
@@ -15,12 +15,31 @@ Vue.js + FastAPI のサンプルプロジェクト。学習・検証用。
 ## ディレクトリ構成
 
 ```
-vue-fastapi-sample/          # 単一の git リポジトリ（main ブランチ）
-├── CLAUDE.md          # このファイル（スタック・契約・規約の正本）
-├── SETUP.md           # セットアップ計画（手順とゲート）
-├── .gitignore         # フロント / バック双方をルートでまとめて管理
-├── frontend/          # Vue 3 + Vite + TypeScript（未セットアップ）
-└── backend/           # FastAPI + uv（未セットアップ）
+vue-fastapi-sample/               # 単一の git リポジトリ（既定ブランチ main）
+├── CLAUDE.md                     # このファイル（スタック・契約・規約の正本）
+├── SETUP.md                      # セットアップの手順と実行記録
+├── .gitignore                    # フロント / バック双方をルートでまとめて管理
+├── frontend/
+│   ├── vite.config.ts            # @ エイリアスと /api の dev proxy
+│   └── src/
+│       ├── App.vue               # 画面本体
+│       ├── main.ts               # createPinia() の登録
+│       ├── types/todo.ts         # backend の schemas.py と手で同期
+│       ├── stores/todos.ts       # Pinia ストア。fetch はここに集約
+│       └── components/
+│           ├── TodoForm.vue
+│           └── TodoItem.vue
+└── backend/
+    ├── pyproject.toml            # 依存 + Ruff / pytest 設定
+    ├── todo.db                   # SQLite（gitignore 済み）
+    ├── app/
+    │   ├── main.py               # FastAPI インスタンスと lifespan
+    │   ├── db.py                 # engine / get_session / SessionDep
+    │   ├── models.py             # SQLModel テーブルモデル
+    │   ├── schemas.py            # 入出力スキーマ
+    │   ├── crud.py               # 永続化操作
+    │   └── routers/todos.py      # /api/todos
+    └── tests/                    # conftest.py / test_todos.py
 ```
 
 フロントとバックエンドは独立したアプリとして扱う。共通コードの共有は現時点では行わない。
@@ -38,7 +57,7 @@ vue-fastapi-sample/          # 単一の git リポジトリ（main ブランチ
 | ルーティング | **採用しない** | 単一画面（一覧＋インライン編集）で完結させる |
 | UI | 素の CSS（`<style scoped>`） | UI フレームワークは入れない |
 | テスト | **導入しない** | フロントのテストはスコープ外 |
-| Lint / Format | ESLint + Prettier | create-vue 同梱の構成をそのまま使う |
+| Lint / Format | ESLint + Prettier（+ oxlint） | create-vue 同梱の構成。oxlint は ESLint 選択時に自動で付く |
 
 ### バックエンド
 
@@ -76,21 +95,57 @@ WSL2 / Ubuntu 上で作業する。
 - `~/.local/bin` は PATH 済み。uv 導入後のシェル再読み込みは不要。
 - uv は システムの Python 3.12.3 を認識済み。別バージョンのダウンロードは不要。
 - Docker は採用しない（インストール済みだが使わない）。
+- `curl` はこの環境では実行が許可されていない。HTTP 疎通確認は `python3` の `urllib` を使う。
+
+### 主要な依存バージョン（2026-08-26 時点）
+
+| frontend | | backend | |
+|---|---|---|---|
+| vue | 3.5.40 | fastapi | 0.141.1 |
+| pinia | 4.0.2 | sqlmodel | 0.0.39 |
+| vite | 8.2.2 | sqlalchemy | 2.0.52 |
+| typescript | 6.0 | pydantic | 2.13.4 |
+| eslint | 10.7 | uvicorn | 0.52.4 |
+| prettier | 3.9.5 | pytest | 9.1.1 |
+| oxlint | 1.80 | ruff | 0.16.4 |
 
 ## 開発コマンド
 
-TBD — セットアップ未着手。以下は予定のコマンドであり、セットアップ完了後に実測値へ置換する。
+### 起動（ターミナル 2 枚）
 
+```bash
+cd backend  && uv run uvicorn app.main:app --reload   # http://127.0.0.1:8000（docs: /docs）
+cd frontend && npm run dev                            # http://localhost:5173
 ```
-# frontend（予定）
-cd frontend && npm run dev
 
-# backend（予定）
-cd backend && uv run uvicorn app.main:app --reload
+backend を先に起動する。frontend の `/api` は Vite の proxy で backend へ中継される。
+
+### 検査（コミット前に通す）
+
+```bash
+# backend
+cd backend && ctxray capture -- uv run pytest
+cd backend && ctxray capture -- uv run ruff check .
+cd backend && ctxray capture -- uv run ruff format --check .
+
+# frontend
+cd frontend && ctxray capture -- npm run build   # vue-tsc の型検査 + vite build
+cd frontend && ctxray capture -- npm run check   # oxlint / eslint / prettier
+```
+
+### 自動修正
+
+```bash
+cd backend  && uv run ruff format .
+cd frontend && npm run lint      # oxlint --fix + eslint --fix
+cd frontend && npm run format    # prettier --write
 ```
 
 **ビルド・テストの実行は必ず `ctxray capture -- <cmd>` 経由で行う。**
 生ログが保存され、失敗が隠れない。`| tail` でのパイプは禁止。
+ただし **dev サーバのような常駐コマンドは `ctxray capture` に通さない**（終了しないため）。
+
+`npm run lint` / `npm run format` は自動修正するので検査には使わない。検査は `npm run check`。
 
 ## API 契約
 
@@ -134,7 +189,13 @@ TodoUpdate = { title?: str, completed?: bool }   # 部分更新
 
 ## 未決定の論点（次に決めること）
 
-1. **セットアップの実行**: `SETUP.md` の Phase 1（uv 導入）から着手してよいか
+セットアップ時点の論点はすべて解消済み。以降に持ち越した検討事項は次のとおり。
+
+1. **frontend のテスト**: 現状は未導入。ストアのロジックが増えたら Vitest の導入を検討する。
+2. **エラー表示の粒度**: 現状はストアの `error` を 1 行表示するのみ。
+   409 / 422 など状況別の出し分けは未実装。
+3. **`vite-plugin-vue-devtools`**: create-vue が無条件で同梱するため残している。
+   不要になったら `vite.config.ts` の 2 行と devDependency を削る。
 
 ## 作業ルール
 

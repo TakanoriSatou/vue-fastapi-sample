@@ -1,9 +1,9 @@
 # セットアップ計画
 
-> **ステータス: 計画（未実行）／作成日 2026-08-26**
+> **ステータス: Phase 0〜8 すべて完了（2026-08-26）**
 > 技術スタックは `CLAUDE.md` の「技術スタック」を正本とする。本書はそれを前提に、
-> 何をどの順で実行し、各段でどう緑を確認するかだけを書く。
-> 実行済みのフェーズは各節の冒頭に「実行済み: YYYY-MM-DD」を追記していく。
+> 何をどの順で実行し、各段でどう緑を確認したか、どこで詰まったかを残す。
+> 再セットアップ時はこの順でなぞれば同じ状態に到達できる。
 
 ## 前提（実測値・2026-08-26 確認）
 
@@ -52,8 +52,11 @@ backend を先に立ち上げる。フロントは叩く先が動いていない
 | # | 作業 | 依頼するコマンド / 操作 | Phase |
 |---|---|---|---|
 | 1 | uv のインストール | `! curl -LsSf https://astral.sh/uv/install.sh \| sh` | 1 |
-| 2 | dev サーバの常駐起動 | `! cd backend && uv run uvicorn app.main:app --reload` 等 | 7 |
-| 3 | ブラウザでの目視確認 | http://localhost:5173 を開いて CRUD を一巡 | 7 |
+| 2 | ブラウザでの目視確認 | http://localhost:5173 を開いて CRUD を一巡 | 7 |
+
+dev サーバの常駐起動は当初「手動が必要」としていたが、**バックグラウンド実行で Claude 側から
+起動・停止できたため不要**になった。HTTP での疎通確認も `python3` の `urllib` で代替できる
+（`curl` はこの環境では権限で弾かれる）。残る手動作業はブラウザ操作のみ。
 
 `! <command>` はこのセッション内で実行され、出力がそのまま会話に入る。
 
@@ -294,66 +297,115 @@ ctxray capture -- uv run ruff format --check .
 
 ## Phase 5: frontend のプロジェクト生成
 
-`frontend/` は空なので、**リポジトリルートから**実行してプロジェクト名に `frontend` を指定する。
+**実行済み: 2026-08-26（create-vue 3.23.0）**
+
+`frontend/` は空なので、**リポジトリルートから**実行してディレクトリ名に `frontend` を指定する。
+フラグを全部渡せば対話プロンプトには入らない。
 
 ```bash
 cd /home/t_satou/workspace/vue-fastapi-sample
-npm create vue@latest
-```
-
-対話プロンプトでの選択（create-vue 3.23.0 想定）:
-
-| 項目 | 選択 |
-|---|---|
-| Project name | `frontend` |
-| TypeScript | **Yes** |
-| JSX Support | No |
-| Vue Router | **No** — 単一画面のため |
-| Pinia | **Yes** |
-| Vitest | No |
-| End-to-End Testing | No |
-| ESLint | **Yes** |
-| Prettier | **Yes** |
-| Vue DevTools | No |
-
-> 非対話で流したい場合は `npm create vue@latest -- --help` でフラグ名を確認してから使う。
-> フラグ名はバージョン間で変わるため、本書では断定しない。
-
-生成後:
-
-```bash
+npm create vue@latest -- --ts --pinia --eslint --prettier --bare frontend
 cd frontend
 npm install
 ```
 
-create-vue は `frontend/.gitignore` を同梱する。ルートの `.gitignore` と併存して問題ないのでそのまま残す。
+### フラグの実測結果（`npm create vue@latest -- --help`）
+
+| フラグ | 効果 |
+|---|---|
+| `--ts` | TypeScript |
+| `--pinia` | Pinia |
+| `--eslint` | ESLint。**oxlint も無条件で同梱される**（`--oxlint` は廃止済みフラグ） |
+| `--prettier` | Prettier |
+| `--bare` | サンプルコードなしの最小構成 |
+| `--router` / `--vitest` | 今回は渡さない（不採用のため） |
+
+`--bare` があるので、当初計画していた「生成後に `HelloWorld.vue` や `assets/` を削除する」作業は不要。
+ただし **Pinia のサンプル `src/stores/counter.ts` は `--bare` でも生成される** ので、
+Phase 6 で `stores/todos.ts` に置き換える際に削除する。
+
+### 導入されたバージョン（実績）
+
+vue 3.5.40 / pinia 4.0.2 / vite 8.2.2 / typescript 6.0 / vue-tsc 3.3.7 /
+eslint 10.7 / prettier 3.9.5 / oxlint 1.80
+
+`package.json` の `engines` は `node ^22.18.0 || >=24.12.0`。ローカルの v24.16.0 は条件を満たす。
+
+### 踏んだ問題と対処
+
+1. **生成された `package.json` の peer dependency が壊れていて `npm install` が失敗した。**
+   `eslint-plugin-oxlint@~1.73.0`（peer: `oxlint@~1.73.0`）に対し `oxlint@~1.74.0` が指定されており、
+   `ERESOLVE` で止まる。create-vue 3.23.0 側のテンプレート不整合。
+   → `--legacy-peer-deps` で誤魔化さず、**両方を `~1.80.0` に揃えて解決**した
+   （`eslint-plugin-oxlint@1.80.0` の peer は `oxlint@~1.80.0`、どちらも実在する最新）。
+
+2. **`npm run lint` と `npm run format` は自動修正するため、ゲートに使えない**
+   （`oxlint . --fix` / `eslint . --fix --cache` / `prettier --write`）。
+   → 書き換えない検査用に `check` スクリプト群を追加した。
+   `lint:*` ではなく `check:*` にしたのは、`lint` が `run-s "lint:*"` で glob 展開するため、
+   `lint:check` という名前だと `npm run lint` から再帰的に呼ばれてしまうから。
+
+   ```json
+   "check": "run-s \"check:*\"",
+   "check:oxlint": "oxlint .",
+   "check:eslint": "eslint .",
+   "check:format": "prettier --check --experimental-cli src/"
+   ```
+
+3. **`vite-plugin-vue-devtools` は `--bare` でも入る**。3.23.0 に除外フラグはない。
+   dev 専用プラグインで実害がなく、学習用途ではむしろ有用なため**そのまま残す**
+   （計画では「Vue DevTools: No」としていた点からの変更）。
+
+create-vue は `frontend/.gitignore` を同梱する。`node_modules` と `dist` はこちらで無視されるため、
+ルートの `.gitignore` と併存させたまま残す。
 
 **ゲート**
 
 ```bash
-ctxray capture -- npm run build
+ctxray capture -- npm run build   # vue-tsc の型検査 + vite build
+ctxray capture -- npm run check   # oxlint / eslint / prettier をすべて検査モードで
 ```
 
 ---
 
 ## Phase 6: frontend の実装
 
-### 目標のファイル構成
+**実行済み: 2026-08-26**
+
+### ファイル構成（実績）
 
 ```
 frontend/src/
-├── main.ts               # createPinia() を登録（生成物のまま）
-├── App.vue               # 画面本体
+├── main.ts               # createPinia() を登録（生成物のまま、変更なし）
+├── App.vue               # 画面本体。ストアと子コンポーネントを繋ぐ
 ├── types/
 │   └── todo.ts           # Todo / TodoCreate / TodoUpdate を手書き定義
 ├── stores/
 │   └── todos.ts          # Pinia ストア。fetch をここに集約
 └── components/
     ├── TodoForm.vue      # 新規作成フォーム
-    └── TodoItem.vue      # 1 件の表示・完了トグル・編集・削除
+    └── TodoItem.vue      # 1 件の表示・完了トグル・インライン編集・削除
 ```
 
-create-vue が生成する `components/HelloWorld.vue` 等のサンプルと `assets/` の初期 CSS は削除する。
+`--bare` で生成したためサンプルコンポーネントは元から無い。
+Pinia のサンプル `src/stores/counter.ts` だけは生成されるので削除した。
+
+### 設計上の要点
+
+| 箇所 | 内容 |
+|---|---|
+| `stores/todos.ts` | `send()` / `sendJson<T>()` の 2 段構成。DELETE は 204 で body が無いため `send()` を使う |
+| 〃 | `run()` ラッパで `loading` / `error` の面倒を 1 箇所に集約 |
+| 〃 | URL は `/api/todos` の相対パス。絶対 URL は書かず proxy に任せる |
+| `App.vue` | `storeToRefs()` を通して state を取り出す（分割代入だけだと reactivity が切れる） |
+| `TodoForm.vue` | 空文字は送信前に止める（backend の 422 を無駄に踏まない） |
+| `TodoItem.vue` | 編集確定時、空文字と無変更は PATCH を送らない |
+| 〃 | `useTemplateRef()`（Vue 3.5 以降）で input を掴み、`nextTick()` 後に focus |
+
+### 計画からの変更点
+
+- 一覧の再取得を避け、**作成 / 更新 / 削除の結果で手元の配列を直接更新**している。
+  backend が作成順で返すため、末尾 push で並びが一致する。
 
 ### 規約上の注意（`CLAUDE.md` より）
 
@@ -363,22 +415,30 @@ create-vue が生成する `components/HelloWorld.vue` 等のサンプルと `as
 - スタイルは `<style scoped>`。UI フレームワークは入れない。
 - 型定義は手書き同期。backend の `schemas.py` を変えたら `types/todo.ts` も必ず直す。
 
-### ストアの持ち物
+### ストアの持ち物（実績）
 
-`useTodosStore`: state に `todos` / `loading` / `error`、actions に
-`fetchTodos` / `createTodo` / `updateTodo` / `deleteTodo`。
+`useTodosStore`:
+
+- state: `todos` / `loading` / `error`
+- getter: `remainingCount`（未完了件数）
+- action: `fetchTodos` / `createTodo` / `updateTodo` / `deleteTodo`
+
 リクエスト先は `/api/todos`（絶対 URL は書かない。proxy に任せる）。
 
 **ゲート**
 
 ```bash
-ctxray capture -- npm run lint
-ctxray capture -- npm run build      # vue-tsc の型チェックが通ること
+ctxray capture -- npm run build   # vue-tsc の型検査 + vite build
+ctxray capture -- npm run check   # oxlint / eslint / prettier（すべて検査モード）
 ```
+
+`npm run lint` はゲートに使わない（`--fix` 付きで書き換えてしまうため。Phase 5 の記録を参照）。
 
 ---
 
 ## Phase 7: 結線と通し確認
+
+**実行済み: 2026-08-26（ブラウザ目視確認まで完了）**
 
 ### Vite dev proxy
 
@@ -415,29 +475,55 @@ cd frontend && npm run dev                              # → http://localhost:5
 
 ### 確認項目
 
-| # | 確認 | 方法 |
-|---|---|---|
-| 1 | backend 単体が応答する | `curl http://127.0.0.1:8000/api/todos` → `[]` |
-| 2 | OpenAPI が引ける | http://127.0.0.1:8000/docs を開く |
-| 3 | proxy が通っている | `curl http://localhost:5173/api/todos` → `[]` |
-| 4 | 画面から作成できる | ブラウザで入力 → 一覧に出る |
-| 5 | 完了トグルが効く | チェック → リロードしても保持される |
-| 6 | 編集・削除が効く | 各操作後にリロードして確認 |
-| 7 | 永続化されている | backend を再起動しても一覧が残る |
+`curl` はこの環境では権限で弾かれるため、疎通確認は `python3` の `urllib` で行う。
 
-**ゲート**: 1〜7 すべて OK。4〜7 はブラウザ操作なのでユーザーに依頼する。
+| # | 確認 | 結果 |
+|---|---|---|
+| 1 | backend 単体が応答する | ✅ `GET http://127.0.0.1:8000/api/todos` → 200 `[]` |
+| 2 | OpenAPI / docs が引ける | ✅ `/docs`・`/openapi.json` とも 200 |
+| 3 | 画面が配信される | ✅ `GET http://localhost:5173/` → 200 |
+| 4 | **proxy が通っている** | ✅ `GET http://localhost:5173/api/todos` → 200 `[]` |
+| 5 | proxy 経由で作成できる | ✅ POST → 201、`id` 採番あり |
+| 6 | proxy 経由で更新できる | ✅ PATCH `completed` / `title` 単独更新とも 200 |
+| 7 | 404 が返る | ✅ 存在しない id → 404 |
+| 8 | proxy 経由で削除できる | ✅ DELETE → 204、以降一覧は空 |
+| 9 | 永続化されている | ✅ backend を停止・再起動しても 1 件残った |
+| 10 | 画面から CRUD を一巡 | ✅ ユーザーによるブラウザ目視確認で問題なし |
+
+1〜10 すべて OK。
+
+### 実測した挙動のメモ
+
+- `created_at` はオフセットなしの ISO 文字列で返る（例 `2026-08-26T07:05:04.577478`）。
+  SQLite がタイムゾーンを保持しないという `models.py` のコメントどおりの結果。
+- 全件削除後に作成すると **`id` は 1 から振り直される**。SQLite の rowid は `AUTOINCREMENT` を
+  付けない限り最大値の再利用を行うため。サンプル用途では問題にしない。
+- backend を再起動しても Vite の proxy はそのまま繋がり直す。frontend の再起動は不要。
 
 ---
 
 ## Phase 8: ドキュメント反映
 
-`CLAUDE.md` を更新する（追記ではなく置換）。
+**実行済み: 2026-08-26**
 
-- 「開発コマンド」の `TBD` を、Phase 7 で実際に動いたコマンドへ置換。
-- ディレクトリ構成の「未セットアップ」を実構成へ置換。
-- ローカル環境の表に uv の実バージョンを追記し、「未インストール」の記述を消す。
-- 「未決定の論点」から完了した項目を削除。
-- 本書（`SETUP.md`）の各フェーズに「実行済み: YYYY-MM-DD」を追記。
+`CLAUDE.md` を更新した（追記ではなく置換）。
+
+- 「開発コマンド」の `TBD` を、実際に動いたコマンドへ置換。起動 / 検査 / 自動修正の 3 分類にした。
+- ディレクトリ構成を実構成へ置換（主要ファイルの役割つき）。
+- ローカル環境に uv 0.12.5 と「`curl` は使えない」旨を追記。主要な依存バージョン表を新設。
+- 「未決定の論点」をセットアップ後の検討事項へ差し替え。
+- 本書の各フェーズに「実行済み」を追記。
+
+**ゲート**
+
+`CLAUDE.md` の本文に `TBD` プレースホルダが残っていないこと。
+
+```bash
+grep -n TBD CLAUDE.md
+```
+
+ヒットするのは「作業ルール」節の 2 行のみ。これは運用ルールとしての `TBD` への言及であり、
+未確定の placeholder ではないので残してよい。
 
 ---
 
