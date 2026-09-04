@@ -18,6 +18,7 @@ Vue.js + FastAPI のサンプルプロジェクト。学習・検証用。
 vue-fastapi-sample/               # 単一の git リポジトリ（既定ブランチ main）
 ├── CLAUDE.md                     # このファイル（スタック・契約・規約の正本）
 ├── SETUP.md                      # セットアップの手順と実行記録
+├── PROMPT_LOG.md                 # 構築時のやり取り（投げたプロンプトと各段の決定）
 ├── .gitignore                    # フロント / バック双方をルートでまとめて管理
 ├── frontend/
 │   ├── vite.config.ts            # @ エイリアスと /api の dev proxy
